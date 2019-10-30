@@ -19,7 +19,9 @@ import copy
 
 from itertools import product
 
-def save_snapshot_2D(xbins, ybins, zvals, title='', name=''):
+def save_snapshot_2D(xbins, ybins, zvals, norm, title='', name=''):
+  if norm:
+    zvals /= zvals.sum()
   plt.pcolormesh(xbins, ybins, zvals.T)
   if zvals[zvals<=0.].size > 0:
     plt.colorbar()
@@ -147,13 +149,13 @@ class MakePdf():
   def integrand(self, x0,x1,x2,t0,t1,w0,w1):
     if self.verbose: print("**************")
     res = 1.0
-    if self.verbose: print(x0,x1,x2,t0,t1,w0,w1)
+    if self.verbose: print("eta,pt,phi,t0,t1, w0,w1:", x0,x1,x2,t0,t1,w0,w1)
     p = np.array([x1*np.cos(x2), x1*np.sin(x2), x1*np.sinh(x0)])
     if self.verbose: print(p)
     boost = self.convert_to_boost( t0, t1)
     psCS = self.boost_to_CS_matrix(p,boost)
     if self.verbose: print(psCS)
-    res *= self.BreitWignerQ(psCS[0])/self.normBW
+    res *= self.BreitWignerQ(psCS[0]*2.0)/self.normBW
     if self.verbose: print(res)
     res *= self.angular_pdf_CS(psCS[1], psCS[2], coeff=[0.0]*8)
     if self.verbose: print(res)
@@ -175,8 +177,8 @@ class MakePdf():
     return res
     
   def integ(self, t0, t1, w0, w1,  x0L, x0U, x1L, x1U):
-    #res = integrate.nquad(self.integrand, [[x0L, x0U], [x1L, x1U], [-np.pi,+np.pi] ], args=(t0,t1, w0, w1))  
-    res = integrate.tplquad(self.integrand, x0L, x0U, lambda x: x1L, lambda x : x1U, lambda x,y : -np.pi, lambda x,y : +np.pi, args=(t0,t1,w0,w1))
+    res = integrate.nquad(self.integrand, [[x0L, x0U], [x1L, x1U], [-np.pi,+np.pi] ], args=(t0,t1, w0, w1))  
+    #res = integrate.tplquad(self.integrand, x0L, x0U, lambda x: x1L, lambda x : x1U, lambda x,y : -np.pi, lambda x,y : +np.pi, args=(t0,t1,w0,w1))
     return res
 
   def integ_bin(self, eta_bin=[0.,0.], pt_bin=[0.,0.]):
@@ -201,11 +203,11 @@ class MakePdf():
 
 if __name__ == '__main__': 
 
-  eta_bins = np.linspace(0, 2.5, 2)
-  pt_bins  = np.linspace(25, 55, 3)
+  eta_bins = np.linspace(-1.0, 1.0, 11)
+  pt_bins  = np.linspace(35, 55, 21)
 
-  eta_bins = np.array([0.0, 0.05])
-  pt_bins = np.array([40.0, 40.5, 41.0, 42.0])
+  #eta_bins = np.array([0.0, 0.05])
+  #pt_bins = np.array([39.0, 39.5, 40.0, 40.5, 41.0, 42.5, 43.0])
 
   makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.0], alphaL=[0., 0.01], verbose=0)
   
@@ -216,7 +218,8 @@ if __name__ == '__main__':
   (res,res_err) = makePdf.integ_all()
   clock -= time.time()
   print('Integration done in '+'{:4.3f}'.format(-clock)+' seconds')
-  save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res, axis=(2,3)), title='test', name='test')
+  save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res, axis=(2,3)), norm=1, title='test', name='test')
+  save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res_err, axis=(2,3))/np.sum(res, axis=(2,3)), norm=0, title='testerr', name='testerr')
   pprint(res)
   pprint(res_err)
                
