@@ -147,23 +147,26 @@ class MakePdf():
   # t0,t1: bT, bL
   # w0,w1: w_bT, w_bL    
   def integrand(self, x0,x1,x2,t0,t1,w0,w1):
-    if self.verbose: print("**************")
-    res = 1.0
-    if self.verbose: print("eta,pt,phi,t0,t1, w0,w1:", x0,x1,x2,t0,t1,w0,w1)
+    if self.verbose: print("********* integrand **************")
+    if self.verbose: print("eta,pt,phi,t0,t1,w0,w1:", x0,x1,x2,t0,t1,w0,w1)
     p = np.array([x1*np.cos(x2), x1*np.sin(x2), x1*np.sinh(x0)])
     if self.verbose: print(p)
+    res = 0.0
     boost = self.convert_to_boost( t0, t1)
-    psCS = self.boost_to_CS_matrix(p,boost)
-    if self.verbose: print(psCS)
-    res *= self.BreitWignerQ(psCS[0]*2.0)/self.normBW
-    if self.verbose: print(res)
-    res *= self.angular_pdf_CS(psCS[1], psCS[2], coeff=[0.0]*8)
+    for sign in [-1,+1]:
+      res_tmp = 0.0
+      psCS = self.boost_to_CS_matrix(p, np.array([boost[0],sign*boost[1],boost[2]])  )
+      if self.verbose: print(psCS)
+      res_tmp += self.BreitWignerQ(psCS[0]*2.0)/self.normBW
+      res_tmp *= self.angular_pdf_CS(psCS[1], psCS[2], coeff=[0.0]*8)
+      # Jacobian 
+      res_tmp *= (4*psCS[0]/(psCS[0]**2-self.lep_mass**2))
+      res += res_tmp
+      if self.verbose: print("\t", res)
+
     if self.verbose: print(res)
     # Jacobian of bL [a,b] --> [-1,+1]
     res *= self.alphaL[1]*0.5
-    if self.verbose: print(res)
-    # Jacobian
-    res *= (4*psCS[0]/(psCS[0]**2-self.lep_mass**2))
     if self.verbose: print(res)
     # Integration over phi
     res *= 2*np.pi
@@ -172,7 +175,7 @@ class MakePdf():
     res *= (w0*w1)
     if self.verbose: print(res)
     # rhs factors (FIX, should be mean <1/pt>^-1)
-    res *= 8.0*x0
+    res *= 8.0*x1
     if self.verbose: print(res)
     return res
     
@@ -203,13 +206,13 @@ class MakePdf():
 
 if __name__ == '__main__': 
 
-  eta_bins = np.linspace(-1.0, 1.0, 11)
-  pt_bins  = np.linspace(35, 55, 21)
+  eta_bins = np.linspace(0.0, 1.0, 10)
+  pt_bins  = np.linspace(35, 45, 21)
 
-  #eta_bins = np.array([0.0, 0.05])
-  #pt_bins = np.array([39.0, 39.5, 40.0, 40.5, 41.0, 42.5, 43.0])
+  #eta_bins = np.array([-0.05, 0.00])
+  #pt_bins = np.array([40.0, 40.5])
 
-  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.0], alphaL=[0., 0.01], verbose=0)
+  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.0], alphaL=[0.0, 0.01], verbose=0)
   
   clock = time.time()
   makePdf.debug_boost()
@@ -222,36 +225,4 @@ if __name__ == '__main__':
   save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res_err, axis=(2,3))/np.sum(res, axis=(2,3)), norm=0, title='testerr', name='testerr')
   pprint(res)
   pprint(res_err)
-               
-
-'''
-if __name__ == '__main__':
-  import math
-
-  def Integrand(ndim, xx, ncomp, ff, userdata):
-    x,y,z = [xx[i] for i in range(ndim.contents.value)]
-    result = math.sin(x)*math.cos(y)*math.exp(z)
-    ff[0] = result
-    return 0
-
-  func = lambda x,y,z: np.sin(x)*np.cos(y)*np.exp(z)
-
-  NDIM = 3
-  MAXEVAL = 100000
- 
-  from os import environ as env
-  verbose = 2
-  if 'CUBAVERBOSE' in env:
-    verbose = int(env['CUBAVERBOSE'])
-
-  res = pycuba.Vegas(Integrand, NDIM, verbose=0, epsrel=0.00001, epsabs=1e-12, maxeval=100000)
-  print(res['results'][0])
-  
-  res = pycuba.Cuhre(Integrand, NDIM, key=13, verbose=0)
-  print(res['results'][0])
-
-  res = integrate.nquad(func, [[0., 1.], [0., 1.], [0.,1.]])
-  print res
-                        
-'''
 
