@@ -35,7 +35,7 @@ def save_snapshot_2D(xbins, ybins, zvals, norm, title='', name=''):
 
 
 class MakePdf():
-  def __init__(self, eta_bins, pt_bins, bT_npts, bL_npts, alphaT, alphaL, verbose) :
+  def __init__(self, eta_bins, pt_bins, bT_npts, bL_npts, alphaT, alphaL, algo, verbose) :
     self.eta_bins = eta_bins
     self.pt_bins = pt_bins
     self.bT_npts = bT_npts
@@ -49,6 +49,7 @@ class MakePdf():
     self.GW2 = self.GW**2
     self.normBW = 1.0
     self.init_roots()
+    self.algo = algo
     self.verbose = verbose
 
   def init_roots(self):
@@ -72,11 +73,6 @@ class MakePdf():
 
   def boost_to_CS_matrix(self, p, boost):
     betagammaT,betagammaL,gamma = boost
-    #r = R.from_rotvec(-boost_phi * np.array([0, 0, 1]))    
-    #print("Before rotation", p)
-    #p3_lab = r.apply(p)
-    #print("After rotation", p3_lab)
-    #p4_lab = np.array([np.sqrt(np.sum(p3_lab**2)+self.lep_mass**2), p3_lab[0], p3_lab[1], p3_lab[2]])    
     p4_lab = np.array([ np.sqrt(np.sum(p**2)+self.lep_mass**2), p[0], p[1], p[2] ])
     Xt = math.sqrt(1 + betagammaT**2)
     boost_matrix = np.array([[ gamma, -betagammaT, 0, -betagammaL ],
@@ -122,7 +118,8 @@ class MakePdf():
     gB = np.sqrt(self.MW2*(self.MW2 + self.GW2))
     norm = 2.0*np.sqrt(2.0)*self.MW*self.GW*gB/np.pi/np.sqrt(self.MW2+gB)
     #return norm*x**2/((x**2-self.MW2)**2 + x**4*self.GW2/self.MW2)
-    return norm/((x**2-self.MW2)**2 + self.MW2*self.GW2)
+    res = norm/((x**2-self.MW2)**2 + self.MW2*self.GW2)
+    return res
 
   def nornalizeBreitWigner(self, algo='vegas', nwidths=100):
     def Integrand(ndim, xx, ncomp, ff, userdata):
@@ -147,41 +144,136 @@ class MakePdf():
   # t0,t1: bT, bL
   # w0,w1: w_bT, w_bL    
   def integrand(self, x0,x1,x2,t0,t1,w0,w1):
-    if self.verbose: print("********* integrand **************")
-    if self.verbose: print("eta,pt,phi,t0,t1,w0,w1:", x0,x1,x2,t0,t1,w0,w1)
-    p = np.array([x1*np.cos(x2), x1*np.sin(x2), x1*np.sinh(x0)])
-    if self.verbose: print(p)
-    res = 0.0
+
+    eta,pt,phi = x0,x1,x2
+    if self.algo in ['tplquad', 'tplquad-improved']:
+      eta,pt,phi = x2,x1,x0
+
+    if self.verbose: print("**** integrand() ****")
+    if self.verbose: print("(eta,pt,phi):", eta,pt,phi, ", (bT,bL,wT,wL):", t0,t1,w0,w1)
+
+    p = np.array([pt*np.cos(phi), pt*np.sin(phi), pt*np.sinh(eta)])
+    if self.verbose: print("p3 (lab):", p)
     boost = self.convert_to_boost( t0, t1)
+
+    res = 0.0
     for sign in [-1,+1]:
       res_tmp = 0.0
-      psCS = self.boost_to_CS_matrix(p, np.array([boost[0],sign*boost[1],boost[2]])  )
-      if self.verbose: print(psCS)
-      res_tmp += self.BreitWignerQ(psCS[0]*2.0)/self.normBW
-      res_tmp *= self.angular_pdf_CS(psCS[1], psCS[2], coeff=[0.0]*8)
-      # Jacobian 
-      res_tmp *= (4*psCS[0]/(psCS[0]**2-self.lep_mass**2))
-      res += res_tmp
-      if self.verbose: print("\t", res)
 
-    if self.verbose: print(res)
+      psCS = self.boost_to_CS_matrix(p, np.array([boost[0],sign*boost[1],boost[2]])  )
+      if self.verbose: print("\t[%s] (E*,cos*,phi*):" % sign, psCS)
+
+      res_tmp += self.BreitWignerQ(psCS[0]*2.0)/self.normBW
+      if self.verbose: print("\tBreitWignerQ",res_tmp)
+
+      res_tmp *= self.angular_pdf_CS(psCS[1], psCS[2], coeff=[0.,0.,0.,0.,0.,0.,0.,0.])
+      if self.verbose: print("\tangular_pdf_CS:",res_tmp)
+
+      res_tmp *= (4*psCS[0]/(psCS[0]**2-self.lep_mass**2))
+      if self.verbose: print("\tJacobian:",res_tmp)
+
+      res += res_tmp
+      if self.verbose: print("\tres:", res)
+
     # Jacobian of bL [a,b] --> [-1,+1]
-    res *= self.alphaL[1]*0.5
-    if self.verbose: print(res)
-    # Integration over phi
-    res *= 2*np.pi
-    if self.verbose: print(res)
+    res *= (self.alphaL[1]-self.alphaL[0])*0.5
+    if self.verbose: print("Jacobian of bL:",res)
+
+    # Integration over phi and cos->-cos
+    res *= 2*np.pi*2
+    if self.verbose: print("Integration over phi:", res)
+
     # the quadrature weights
     res *= (w0*w1)
-    if self.verbose: print(res)
-    # rhs factors (FIX, should be mean <1/pt>^-1)
-    res *= 8.0*x1
-    if self.verbose: print(res)
+    if self.verbose: print("Quadrature weights:", res)
+
+    # rhs factors
+    res *= pt/2.0
+    if self.verbose: print("===> integrand: :", res)
     return res
     
+
+  def find_roots(self, eta,pt,t0,t1, nwidths, in_out):
+    gammabetaT,gammabetaL,gamma = self.convert_to_boost(t0,t1)
+    if gammabetaL<1e-06: 
+      if in_out==0:
+        if self.verbose: print("R0: [0, np.pi/3]")
+        return [0, np.pi/3] 
+      elif in_out==1: 
+        if self.verbose: print("R1: [np.pi/3, 2*np.pi/3]")
+        return [np.pi/3, 2*np.pi/3]
+      else:
+        if self.verbose: print("R2: [2*np.pi/3, np.pi]")
+        return [2*np.pi/3, np.pi]
+    betaT = gammabetaT/gamma
+    betaL = gammabetaL/gamma
+    E,pL = pt*np.cosh(eta),pt*np.sinh(eta)
+    offset = (E - betaL*pL)/(betaT*pt)    
+    x1,x2 = -0.5*(self.MW + nwidths*self.GW)/(gammabetaT*pt) + offset, -0.5*(self.MW - nwidths*self.GW)/(gammabetaT*pt) + offset
+    if self.verbose: print(x1,x2)
+    if x1<-1.0:
+      if x2<-1.0 or x2>1.0:
+        if in_out==0:
+          if self.verbose: print("R3:  [0, np.pi/3]")
+          return [0, np.pi/3]
+        elif in_out==1:
+          if self.verbose: print("R4: [np.pi/3, 2*np.pi/3]")
+          return [np.pi/3, 2*np.pi/3]
+        else:
+          if self.verbose: print("R5: [2*np.pi/3, np.pi]")
+          return [2*np.pi/3, np.pi]
+      else:  
+        if in_out==0:
+          if self.verbose: print("R6: [np.arccos(x2), np.pi]")
+          return [np.arccos(x2), np.pi] 
+        elif in_out==1:
+          if self.verbose: print("R7: [0, np.arccos(x2)/2]")
+          return [0, np.arccos(x2)/2]
+        else:
+          if self.verbose: print("R8: [np.arccos(x2)/2, np.arccos(x2)]")
+          return [np.arccos(x2)/2, np.arccos(x2)]
+    elif x1>=-1.0 and x1<=1.0:
+      if x2<=1.0:
+        if in_out==0:
+          if self.verbose: print("R9: [np.arccos(x2), np.arccos(x1)]")
+          return [np.arccos(x2), np.arccos(x1)]
+        elif in_out==1:
+          if self.verbose: print("R10: [0, np.arccos(x2)]")
+          return [0, np.arccos(x2)]
+        else:
+          if self.verbose: print("R11: [np.arccos(x1), np.pi]")
+          return [np.arccos(x1), np.pi] 
+    else:
+       if in_out==0:
+         if self.verbose: print("R12: [0, np.pi/3]")
+         return [0, np.pi/3]
+       elif in_out==1:
+         if self.verbose: print("R13: [np.pi/3, 2*np.pi/3]")
+         return [np.pi/3, 2*np.pi/3]
+       else:
+         if self.verbose: print("R14: [2*np.pi/3, np.pi]")
+         return [2*np.pi/3, np.pi]
+
   def integ(self, t0, t1, w0, w1,  x0L, x0U, x1L, x1U):
-    res = integrate.nquad(self.integrand, [[x0L, x0U], [x1L, x1U], [-np.pi,+np.pi] ], args=(t0,t1, w0, w1))  
-    #res = integrate.tplquad(self.integrand, x0L, x0U, lambda x: x1L, lambda x : x1U, lambda x,y : -np.pi, lambda x,y : +np.pi, args=(t0,t1,w0,w1))
+    if self.algo=='nquad':
+      res = integrate.nquad(self.integrand, [[x0L, x0U], [x1L, x1U], [0,+np.pi*1] ], args=(t0,t1, w0, w1))  
+    elif self.algo=='tplquad':
+      res = integrate.tplquad(self.integrand, x0L, x0U, lambda x0: x1L, lambda x0 : x1U, lambda x0,x1 : 0, lambda x0,x1 : np.pi, args=(t0,t1,w0,w1))
+    elif self.algo=='tplquad-improved':
+      res1 = integrate.tplquad(self.integrand, x0L, x0U, lambda x0: x1L, lambda x0 : x1U, 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0, in_out=0)[0], 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0,in_out=0)[1], args=(t0,t1,w0,w1))
+      print(res1)
+      res2 = integrate.tplquad(self.integrand, x0L, x0U, lambda x0: x1L, lambda x0 : x1U, 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0, in_out=1)[0], 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0,in_out=1)[1], args=(t0,t1,w0,w1))
+      print(res2)
+      res3 = integrate.tplquad(self.integrand, x0L, x0U, lambda x0: x1L, lambda x0 : x1U, 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0, in_out=2)[0], 
+                               lambda x0,x1 : self.find_roots(x0,x1,t0,t1,5.0,in_out=2)[1], args=(t0,t1,w0,w1))
+      print(res3)
+      res = (res1[0]+res2[0]+res3[0], res1[1]+res2[1]+res3[1])
+
     return res
 
   def integ_bin(self, eta_bin=[0.,0.], pt_bin=[0.,0.]):
@@ -195,6 +287,7 @@ class MakePdf():
                                                  pt_bin[0], pt_bin[1])      
     return (res,res_err)
 
+
   def integ_all(self):
     res,res_err = (np.zeros(shape=(self.eta_bins.size-1, self.pt_bins.size-1, self.bL_npts,self.bT_npts), dtype=np.float64), 
                    np.zeros(shape=(self.eta_bins.size-1, self.pt_bins.size-1, self.bL_npts,self.bT_npts), dtype=np.float64))
@@ -206,16 +299,16 @@ class MakePdf():
 
 if __name__ == '__main__': 
 
-  eta_bins = np.linspace(0.0, 1.0, 10)
-  pt_bins  = np.linspace(35, 45, 21)
+  #eta_bins = np.linspace(0.0, 1.0, 10)
+  #pt_bins  = np.linspace(35, 45, 21)
 
-  #eta_bins = np.array([-0.05, 0.00])
-  #pt_bins = np.array([40.0, 40.5])
+  eta_bins = np.array([-0.05, 0.00])
+  pt_bins = np.array([30.0, 30.5])
 
-  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.0], alphaL=[0.0, 0.01], verbose=0)
+  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.1], alphaL=[0.0, 0.01], algo='tplquad-improved', verbose=1)
   
   clock = time.time()
-  makePdf.debug_boost()
+  #makePdf.debug_boost()
   makePdf.nornalizeBreitWigner(algo='quad', nwidths=100)
   
   (res,res_err) = makePdf.integ_all()
