@@ -148,6 +148,8 @@ class MakePdf():
     eta,pt,phi = x0,x1,x2
     if self.algo in ['tplquad', 'tplquad-improved']:
       eta,pt,phi = x2,x1,x0
+    elif self.algo=='fast':
+      eta,pt,phi = x1,x2,x0
 
     if self.verbose: print("**** integrand() ****")
     if self.verbose: print("(eta,pt,phi):", eta,pt,phi, ", (bT,bL,wT,wL):", t0,t1,w0,w1)
@@ -274,6 +276,10 @@ class MakePdf():
       print(res3)
       res = (res1[0]+res2[0]+res3[0], res1[1]+res2[1]+res3[1])
 
+    elif self.algo=='fast':
+      res1 = integrate.quad(self.integrand, 0, np.pi, args=( (x0L+x0U)*0.5, (x1L+x1U)*0.5, t0,t1, w0, w1) )
+      res = (res1[0]*(x0U-x0L)*(x1U-x1L),  res1[1]*(x0U-x0L)*(x1U-x1L))
+
     return res
 
   def integ_bin(self, eta_bin=[0.,0.], pt_bin=[0.,0.]):
@@ -281,6 +287,7 @@ class MakePdf():
                    np.zeros(shape=(self.bL_npts,self.bT_npts), dtype=np.float64))
     for iL in range(self.bL_npts):
       for iT in range(self.bT_npts):
+        if iL%5==0 and iT%5==0: print("\t(bL,bT) roots (%s,%s)" % (iL,iT))
         (res[iL,iT],res_err[iL,iT]) = self.integ(self.bT_pts[0][iT], self.bL_pts[0][iL], 
                                                  self.bT_pts[1][iT], self.bL_pts[1][iL],
                                                  eta_bin[0], eta_bin[1], 
@@ -293,19 +300,19 @@ class MakePdf():
                    np.zeros(shape=(self.eta_bins.size-1, self.pt_bins.size-1, self.bL_npts,self.bT_npts), dtype=np.float64))
     for ieta in range(self.eta_bins.size-1):
       for ipt in range(self.pt_bins.size-1):
-        print("Integrating (eta,pt) bin (%s,%s)" % (ieta,ipt))
+        if ieta%5==0 and ipt%5==0: print("Integrating (eta,pt) bin (%s,%s)" % (ieta,ipt))
         (res[ieta,ipt], res_err[ieta,ipt]) = self.integ_bin(self.eta_bins[ieta:ieta+2], self.pt_bins[ipt:ipt+2] )
     return (res, res_err)
 
 if __name__ == '__main__': 
 
-  #eta_bins = np.linspace(0.0, 1.0, 10)
-  #pt_bins  = np.linspace(35, 45, 21)
+  eta_bins = np.linspace(0.0, 1.0, 21)
+  pt_bins  = np.linspace(35, 50, 16)
 
-  eta_bins = np.array([-0.05, 0.00])
-  pt_bins = np.array([30.0, 30.5])
+  #eta_bins = np.array([-0.05, 0.00])
+  #pt_bins = np.array([30.0, 30.5])
 
-  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=1, bL_npts=1, alphaT=[0.1], alphaL=[0.0, 0.01], algo='tplquad-improved', verbose=1)
+  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=8, bL_npts=5, alphaT=[0.04], alphaL=[0.0, 2.0], algo='fast', verbose=0)
   
   clock = time.time()
   #makePdf.debug_boost()
@@ -316,6 +323,4 @@ if __name__ == '__main__':
   print('Integration done in '+'{:4.3f}'.format(-clock)+' seconds')
   save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res, axis=(2,3)), norm=1, title='test', name='test')
   save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res_err, axis=(2,3))/np.sum(res, axis=(2,3)), norm=0, title='testerr', name='testerr')
-  pprint(res)
-  pprint(res_err)
-
+  np.save('pdf', res)
