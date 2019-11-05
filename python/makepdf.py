@@ -35,7 +35,7 @@ def save_snapshot_2D(xbins, ybins, zvals, norm, title='', name=''):
 
 
 class MakePdf():
-  def __init__(self, eta_bins, pt_bins, bT_npts, bL_npts, alphaT, alphaL, algo, verbose) :
+  def __init__(self, eta_bins, pt_bins, bT_npts, bL_npts, alphaT, alphaL, algo, get, verbose) :
     self.eta_bins = eta_bins
     self.pt_bins = pt_bins
     self.bT_npts = bT_npts
@@ -43,13 +43,14 @@ class MakePdf():
     self.alphaT = alphaT
     self.alphaL = alphaL
     self.lep_mass = 0.105
-    self.MW = 80.419 
+    self.MW = 80.000
     self.GW = 2.5
     self.MW2 = self.MW**2
     self.GW2 = self.GW**2
     self.normBW = 1.0
     self.init_roots()
     self.algo = algo
+    self.get = get
     self.verbose = verbose
 
   def init_roots(self):
@@ -63,6 +64,12 @@ class MakePdf():
 
   def convert_to_y(self, bL):
     return bL*(self.alphaL[1]-self.alphaL[0])*0.5 + (self.alphaL[1]+self.alphaL[0])*0.5
+
+  def ansatz_pdf(self, bT, bL, sigma=2.0):
+    y = self.convert_to_y(bL)
+    pdf_L = (np.exp( -0.5*y**2/sigma )/np.sqrt(2*np.pi)/sigma)*2
+    pdf_T = (bT*np.exp(-bT))
+    return pdf_T*pdf_L
 
   def convert_to_boost(self, bT, bL):
     betagammaT = self.convert_to_betagammaT(bT)
@@ -145,8 +152,9 @@ class MakePdf():
   # w0,w1: w_bT, w_bL    
   def integrand(self, x0,x1,x2,t0,t1,w0,w1):
 
-    eta,pt,phi = x0,x1,x2
-    if self.algo in ['tplquad', 'tplquad-improved']:
+    if self.algo=='nquad':
+      eta,pt,phi = x0,x1,x2
+    elif self.algo in ['tplquad', 'tplquad-improved']:
       eta,pt,phi = x2,x1,x0
     elif self.algo=='fast':
       eta,pt,phi = x1,x2,x0
@@ -177,17 +185,22 @@ class MakePdf():
       res += res_tmp
       if self.verbose: print("\tres:", res)
 
-    # Jacobian of bL [a,b] --> [-1,+1]
-    res *= (self.alphaL[1]-self.alphaL[0])*0.5
-    if self.verbose: print("Jacobian of bL:",res)
 
     # Integration over phi and cos->-cos
     res *= 2*np.pi*2
     if self.verbose: print("Integration over phi:", res)
 
     # the quadrature weights
-    res *= (w0*w1)
-    if self.verbose: print("Quadrature weights:", res)
+    if self.get == 'quadrature':
+      # Jacobian of bL [a,b] --> [-1,+1]    
+      res *= (self.alphaL[1]-self.alphaL[0])*0.5
+      if self.verbose: print("Jacobian of bL:",res)
+      res *= (w0*w1)
+      if self.verbose: print("Quadrature weights:", res)
+    elif self.get == 'pdf':
+      res *= self.ansatz_pdf(t0,t1,sigma=2.0)      
+      if self.verbose: print("Ansatz pdf (xexp factored):", res)
+      res /= (t0*np.exp(-t0))
 
     # rhs factors
     res *= pt/2.0
@@ -306,13 +319,13 @@ class MakePdf():
 
 if __name__ == '__main__': 
 
-  eta_bins = np.linspace(0.0, 1.0, 21)
-  pt_bins  = np.linspace(35, 50, 16)
+  #eta_bins = np.linspace(0.0, 1.0, 21)
+  #pt_bins  = np.linspace(35, 50, 16)
 
-  #eta_bins = np.array([-0.05, 0.00])
-  #pt_bins = np.array([30.0, 30.5])
+  eta_bins = np.array([-0.05, +0.05])
+  pt_bins = np.array([37.5, 38.5, 39.5, 40.5, 41.5, 42.5, 43.5])
 
-  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=8, bL_npts=5, alphaT=[0.04], alphaL=[0.0, 2.0], algo='fast', verbose=0)
+  makePdf = MakePdf(eta_bins=eta_bins, pt_bins=pt_bins, bT_npts=80, bL_npts=5, alphaT=[0.05], alphaL=[0.0, 1.0], algo='fast', get='pdf', verbose=0)
   
   clock = time.time()
   #makePdf.debug_boost()
@@ -323,4 +336,4 @@ if __name__ == '__main__':
   print('Integration done in '+'{:4.3f}'.format(-clock)+' seconds')
   save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res, axis=(2,3)), norm=1, title='test', name='test')
   save_snapshot_2D(xbins=eta_bins, ybins=pt_bins, zvals=np.sum(res_err, axis=(2,3))/np.sum(res, axis=(2,3)), norm=0, title='testerr', name='testerr')
-  np.save('pdf', res)
+  np.savez('pdf', res, res_err, eta_bins, pt_bins,  makePdf.convert_to_y(makePdf.bL_pts[0]), makePdf.convert_to_betagammaT(makePdf.bT_pts[0]))
